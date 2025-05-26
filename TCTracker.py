@@ -197,7 +197,6 @@ class TrackerUI:
             except:
                 messagebox.showerror("Error","Invalid input.")
         tk.Button(stat_win, text="Apply", command=apply).grid(row=3,column=0,columnspan=2)
-
     def export_to_html(self):
         filepath = filedialog.asksaveasfilename(defaultextension=".html",
             filetypes=[("HTML files","*.html")])
