@@ -53,19 +53,33 @@ class CampaignTracker:
         }
         key = str(round_num)
         self.data["rounds"].setdefault(key, []).append(match)
-        for wb, vp, glory, casualties, result in [
-            (w1, vp1, g1, c1, w1 == winner),
-            (w2, vp2, g2, c2, w2 == winner)
+        # immediately apply to stats
+        self._apply_match_stats(match)
+
+    def _apply_match_stats(self, match):
+        # apply a single match to warband stats
+        for wb, vp_field, g_field, c_field, result in [
+            (match["warband1"], "victory_points1", "glory1", "casualties1", match["warband1"] == match["winner"]),
+            (match["warband2"], "victory_points2", "glory2", "casualties2", match["warband2"] == match["winner"])
         ]:
-            if wb not in self.data["warbands"]:
+            stats = self.data["warbands"].get(wb)
+            if not stats:
                 continue
-            stats = self.data["warbands"][wb]
-            stats["victory_points"] += vp
-            stats["glory"] += glory
-            stats["casualties"] += casualties
+            stats["victory_points"] += match[vp_field]
+            stats["glory"] += match[g_field]
+            stats["casualties"] += match[c_field]
             stats["wins"] += int(result)
             stats["losses"] += int(not result)
             stats["matches"].append(match)
+
+    def recalc_stats(self):
+        # clear and rebuild all warband stats from rounds
+        for name, wb in self.data["warbands"].items():
+            wb["wins"] = wb["losses"] = wb["glory"] = wb["casualties"] = wb["victory_points"] = 0
+            wb["matches"] = []
+        for matches in self.data.get("rounds", {}).values():
+            for m in matches:
+                self._apply_match_stats(m)
 
     def get_warbands(self):
         return list(self.data["warbands"].keys())
@@ -102,37 +116,30 @@ class TrackerUI:
         tk.Label(root, text="Round").grid(row=2, column=0)
         self.round_entry = tk.Entry(root)
         self.round_entry.grid(row=2, column=1)
-
         tk.Label(root, text="Warband 1").grid(row=3, column=0)
         self.w1_combo = ttk.Combobox(root)
         self.w1_combo.grid(row=3, column=1)
-
         tk.Label(root, text="Warband 2").grid(row=4, column=0)
         self.w2_combo = ttk.Combobox(root)
         self.w2_combo.grid(row=4, column=1)
-
         tk.Label(root, text="Winner").grid(row=5, column=0)
         self.winner_combo = ttk.Combobox(root)
         self.winner_combo.grid(row=5, column=1)
-
         tk.Label(root, text="Victory Points W1 / W2").grid(row=6, column=0)
         self.vp1_entry = tk.Entry(root, width=5)
         self.vp2_entry = tk.Entry(root, width=5)
         self.vp1_entry.grid(row=6, column=1, sticky="w")
         self.vp2_entry.grid(row=6, column=1, sticky="e")
-
         tk.Label(root, text="Glory Points W1 / W2").grid(row=7, column=0)
         self.glory1_entry = tk.Entry(root, width=5)
         self.glory2_entry = tk.Entry(root, width=5)
         self.glory1_entry.grid(row=7, column=1, sticky="w")
         self.glory2_entry.grid(row=7, column=1, sticky="e")
-
         tk.Label(root, text="Casualties W1 / W2").grid(row=8, column=0)
         self.cas1_entry = tk.Entry(root, width=5)
         self.cas2_entry = tk.Entry(root, width=5)
         self.cas1_entry.grid(row=8, column=1, sticky="w")
         self.cas2_entry.grid(row=8, column=1, sticky="e")
-
         tk.Button(root, text="Add Match", command=self.add_match).grid(row=9, column=0, columnspan=2)
         tk.Button(root, text="Save & Exit", command=self.on_exit).grid(row=10, column=0, columnspan=2)
         tk.Button(root, text="Export to HTML", command=self.export_to_html).grid(row=11, column=0, columnspan=2, pady=(5,0))
@@ -152,11 +159,11 @@ class TrackerUI:
     def add_match(self):
         try:
             r = int(self.round_entry.get())
-            w1 = self.w1_combo.get(); w2 = self.w2_combo.get(); win = self.winner_combo.get()
-            vp1 = int(self.vp1_entry.get()); vp2 = int(self.vp2_entry.get())
-            g1 = int(self.glory1_entry.get()); g2 = int(self.glory2_entry.get())
-            c1 = int(self.cas1_entry.get()); c2 = int(self.cas2_entry.get())
-            if not all([w1, w2, win]) or w1 == w2 or win not in [w1, w2]:
+            w1, w2, win = self.w1_combo.get(), self.w2_combo.get(), self.winner_combo.get()
+            vp1, vp2 = int(self.vp1_entry.get()), int(self.vp2_entry.get())
+            g1, g2 = int(self.glory1_entry.get()), int(self.glory2_entry.get())
+            c1, c2 = int(self.cas1_entry.get()), int(self.cas2_entry.get())
+            if not all([w1, w2, win]) or w1==w2 or win not in [w1, w2]:
                 raise ValueError("Invalid match setup.")
             self.tracker.add_match(r, w1, w2, win, vp1, vp2, g1, g2, c1, c2)
             messagebox.showinfo("Success", "Match added.")
@@ -167,7 +174,8 @@ class TrackerUI:
     def refresh_warband_list(self):
         self.warband_list.delete(0, tk.END)
         names = self.tracker.get_warbands()
-        for n in names: self.warband_list.insert(tk.END, n)
+        for n in names:
+            self.warband_list.insert(tk.END, n)
         self.w1_combo['values'] = names
         self.w2_combo['values'] = names
         self.winner_combo['values'] = names
@@ -175,7 +183,7 @@ class TrackerUI:
     def refresh_rounds_menu(self):
         self.rounds_menu.delete(0, tk.END)
         for r in self.tracker.get_rounds():
-            self.rounds_menu.add_command(label=f"Round {r}", command=lambda round=r: self.view_round(round))
+            self.rounds_menu.add_command(label=f"Round {r}", command=lambda rn=r: self.view_round(rn))
 
     def view_round(self, round_number):
         rk = str(round_number)
@@ -187,13 +195,69 @@ class TrackerUI:
         for col in cols:
             tree.heading(col, text=col)
             tree.column(col, width=80)
-        for m in matches:
-            tree.insert("","end",values=(
+        for idx, m in enumerate(matches):
+            tree.insert("", "end", iid=str(idx), values=(
                 m["warband1"], m["warband2"], m["winner"],
                 m["victory_points1"], m["victory_points2"],
                 m["glory1"], m["glory2"], m["casualties1"], m["casualties2"]
             ))
         tree.pack(fill="both", expand=True)
+        # Edit button
+        tk.Button(win, text="Edit Selected Match", command=lambda: self.open_match_editor(rk, tree, win)).pack(pady=5)
+
+    def open_match_editor(self, round_key, tree, parent_win):
+        sel = tree.selection()
+        if not sel:
+            messagebox.showerror("Error", "No match selected.")
+            return
+        idx = int(sel[0])
+        match = self.tracker.data["rounds"][round_key][idx]
+        editor = tk.Toplevel(self.root)
+        editor.title("Edit Match")
+
+        # Fields
+        tk.Label(editor, text="Warband 1:").grid(row=0, column=0)
+        tk.Label(editor, text=match["warband1"]).grid(row=0, column=1)
+        tk.Label(editor, text="Warband 2:").grid(row=1, column=0)
+        tk.Label(editor, text=match["warband2"]).grid(row=1, column=1)
+
+        tk.Label(editor, text="Winner:").grid(row=2, column=0)
+        winner_cb = ttk.Combobox(editor, values=[match["warband1"], match["warband2"]], state="readonly")
+        winner_cb.grid(row=2, column=1)
+        winner_cb.set(match["winner"])
+
+        fields = [
+            ("Victory Points 1", "victory_points1"),
+            ("Victory Points 2", "victory_points2"),
+            ("Glory 1", "glory1"),
+            ("Glory 2", "glory2"),
+            ("Casualties 1", "casualties1"),
+            ("Casualties 2", "casualties2")
+        ]
+        entries = {}
+        for i, (label, key) in enumerate(fields, start=3):
+            tk.Label(editor, text=label+":").grid(row=i, column=0)
+            ent = tk.Entry(editor)
+            ent.grid(row=i, column=1)
+            ent.insert(0, str(match[key]))
+            entries[key] = ent
+
+        def apply_changes():
+            try:
+                # reset and recalc all stats
+                match["winner"] = winner_cb.get()
+                for key, ent in entries.items():
+                    match[key] = int(ent.get())
+                self.tracker.recalc_stats()
+                messagebox.showinfo("Updated", "Match and stats updated.")
+                editor.destroy()
+                parent_win.destroy()
+                self.refresh_warband_list()
+                self.refresh_rounds_menu()
+            except ValueError:
+                messagebox.showerror("Error", "Invalid numeric value.")
+
+        tk.Button(editor, text="Apply", command=apply_changes).grid(row=11, column=0, columnspan=2)
 
     def show_context_menu(self, event):
         idx = self.warband_list.nearest(event.y)
@@ -214,29 +278,30 @@ class TrackerUI:
 
     def open_stat_editor(self):
         name = self.get_selected_warband()
-        if not name: return
+        if not name:
+            return
         stat_win = tk.Toplevel(self.root)
         stat_win.title(f"Edit Stats - {name}")
-        tk.Label(stat_win, text="Victory Points").grid(row=0,column=0)
-        vp_entry = tk.Entry(stat_win); vp_entry.grid(row=0,column=1)
-        tk.Label(stat_win, text="Glory").grid(row=1,column=0)
-        gl_entry = tk.Entry(stat_win); gl_entry.grid(row=1,column=1)
-        tk.Label(stat_win, text="Casualties").grid(row=2,column=0)
-        ca_entry = tk.Entry(stat_win); ca_entry.grid(row=2,column=1)
+        tk.Label(stat_win, text="Victory Points").grid(row=0, column=0)
+        vp_entry = tk.Entry(stat_win); vp_entry.grid(row=0, column=1)
+        tk.Label(stat_win, text="Glory").grid(row=1, column=0)
+        gl_entry = tk.Entry(stat_win); gl_entry.grid(row=1, column=1)
+        tk.Label(stat_win, text="Casualties").grid(row=2, column=0)
+        ca_entry = tk.Entry(stat_win); ca_entry.grid(row=2, column=1)
         cur = self.tracker.data["warbands"][name]
-        vp_entry.insert(0,str(cur.get("victory_points",0)))
-        gl_entry.insert(0,str(cur["glory"]))
-        ca_entry.insert(0,str(cur["casualties"]))
+        vp_entry.insert(0, str(cur.get("victory_points", 0)))
+        gl_entry.insert(0, str(cur["glory"]))
+        ca_entry.insert(0, str(cur["casualties"]))
         def apply():
             try:
                 cur["victory_points"] = int(vp_entry.get())
                 cur["glory"] = int(gl_entry.get())
                 cur["casualties"] = int(ca_entry.get())
-                messagebox.showinfo("Updated",f"Stats for {name} saved.")
+                messagebox.showinfo("Updated", f"Stats for {name} saved.")
                 stat_win.destroy()
             except:
-                messagebox.showerror("Error","Invalid input.")
-        tk.Button(stat_win,text="Apply",command=apply).grid(row=3,column=0,columnspan=2)
+                messagebox.showerror("Error", "Invalid input.")
+        tk.Button(stat_win, text="Apply", command=apply).grid(row=11, column=0, columnspan=2)
 
     def export_to_html(self):
         filepath = filedialog.asksaveasfilename(defaultextension=".html", filetypes=[("HTML files", "*.html")])
